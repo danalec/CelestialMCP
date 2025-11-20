@@ -4,7 +4,6 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { parse } from 'csv-parse/sync';
 import * as Astronomy from 'astronomy-engine';
-import { execSync } from 'child_process';
 
 // No custom class needed - we'll use our own calculations for fixed stars
 
