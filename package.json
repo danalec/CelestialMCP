@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsc && mcp-build",
     "watch": "tsc --watch",
-    "start": "node dist/index.js",
+    "start": "node --require ./scripts/node24-polyfills.cjs dist/index.js",
     "fetch-catalogs": "node scripts/fetch-catalogs.js"
   },
   "dependencies": {
