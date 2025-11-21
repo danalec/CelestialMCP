@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { parse } from 'csv-parse/sync';
+import { parse } from 'csv-parse';
 import * as Astronomy from 'astronomy-engine';
 
 // No custom class needed - we'll use our own calculations for fixed stars
@@ -54,236 +54,108 @@ export const SOLAR_SYSTEM_OBJECTS: Record<string, boolean> = {
  * Load deep sky objects from CSV file
  * @param filePath Path to the DSO CSV file
  */
-export function loadDSOCatalog(filePath: string): void {
+export async function loadDSOCatalog(filePath: string): Promise<void> {
   try {
     if (!fs.existsSync(filePath)) {
       console.warn(`DSO catalog file ${filePath} not found. Data from this file will not be loaded.`);
       return;
     }
-    
-    const fileContent = fs.readFileSync(filePath, 'utf8');
-    
-    // Special handling for OpenNGC format which uses semicolons
-    if (filePath.endsWith('ngc.csv') || filePath.includes('NGC.csv')) {
-      // Create a custom parser for OpenNGC format
-      console.log('Using custom parser for OpenNGC format');
-      try {
-        const lines = fileContent.split('\n');
-        const headers = lines[0].split(';');
-        
-        // Start from line 1 (skip header)
-        for (let i = 1; i < lines.length; i++) {
-          if (!lines[i].trim()) continue; // Skip empty lines
-          
-          // Split the line by semicolon
-          const values = lines[i].split(';');
-          const record: Record<string, string> = {};
-          
-          // Assign each value to its corresponding header
-          for (let j = 0; j < headers.length && j < values.length; j++) {
-            record[headers[j]] = values[j];
+    const isOpenNGC = filePath.endsWith('ngc.csv') || filePath.includes('NGC.csv');
+    const delimiter = isOpenNGC ? ';' : ',';
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    await new Promise<void>((resolve, reject) => {
+      const parser = parse({ columns: true, skip_empty_lines: true, delimiter });
+      parser.on('data', (record: any) => {
+        let name = record.name || record.Name || record.id || record.ID || record.Name || '';
+        const commonName = record.common_name || record.commonName || record['common name'] || record['Common names'] || '';
+        const type = record.type || record.Type || '';
+        if (isOpenNGC && record.Name) {
+          name = record.Name;
+          if (name.startsWith('NGC')) {
+            const m = name.match(/^NGC0*([1-9]\d*)$/);
+            if (m) name = 'NGC' + m[1];
           }
-          
-          // Process the record
-          if (record.Name) {
-            // Fix object names with leading zeros (NGC0001 -> NGC1, IC0001 -> IC1)
-            let name = record.Name;
-            
-            // Handle NGC objects with leading zeros
-            if (name.startsWith('NGC')) {
-              const ngcMatch = name.match(/^NGC0*([1-9]\d*)$/);
-              if (ngcMatch) {
-                name = 'NGC' + ngcMatch[1]; // Remove leading zeros
-              }
-            }
-            
-            // Handle IC objects with leading zeros
-            if (name.startsWith('IC')) {
-              const icMatch = name.match(/^IC0*([1-9]\d*)$/);
-              if (icMatch) {
-                name = 'IC' + icMatch[1]; // Remove leading zeros
-              }
-            }
-            
-            const type = record.Type || '';
-            const commonName = record['Common names'] || '';
-            
-            // Parse RA (format should be HH:MM:SS.SS)
-            let raHours: number | undefined;
-            if (record.RA) {
-              const raParts = record.RA.split(':');
-              if (raParts.length === 3) {
-                const hours = parseFloat(raParts[0]);
-                const minutes = parseFloat(raParts[1]);
-                const seconds = parseFloat(raParts[2]);
-                if (!isNaN(hours) && !isNaN(minutes) && !isNaN(seconds)) {
-                  raHours = hours + (minutes / 60) + (seconds / 3600);
-                }
-              }
-            }
-            
-            // Parse Dec (format should be +/-DD:MM:SS.S)
-            let decDegrees: number | undefined;
-            if (record.Dec) {
-              const decStr = record.Dec.trim();
-              if (decStr !== '') {
-                const decParts = decStr.split(':');
-                if (decParts.length === 3) {
-                  const sign = decStr.startsWith('-') ? -1 : 1;
-                  // Remove sign for parsing absolute degrees, handle empty parts
-                  const degreesStr = decParts[0].replace(/^[+-]/, '');
-                  const minutesStr = decParts[1];
-                  const secondsStr = decParts[2];
-
-                  if (degreesStr !== '' && minutesStr !== '' && secondsStr !== '') {
-                      const degrees = parseFloat(degreesStr);
-                      const minutes = parseFloat(minutesStr);
-                      const seconds = parseFloat(secondsStr);
-
-                      if (!isNaN(degrees) && !isNaN(minutes) && !isNaN(seconds)) {
-                          decDegrees = (degrees + (minutes / 60) + (seconds / 3600)) * sign;
-                      }
-                  }
-                }
-              }
-            }
-            
-            // Only add valid entries
-            if (raHours !== undefined && decDegrees !== undefined) {
-              let magnitude: number | undefined;
-              const vMagStr = record['V-Mag'];
-              const bMagStr = record['B-Mag'];
-
-              if (vMagStr && vMagStr.trim() !== '') {
-                const magVal = parseFloat(vMagStr);
-                if (!isNaN(magVal)) {
-                  magnitude = magVal;
-                }
-              } else if (bMagStr && bMagStr.trim() !== '') { // Fallback to B-Mag if V-Mag is not available
-                const magVal = parseFloat(bMagStr);
-                if (!isNaN(magVal)) {
-                  magnitude = magVal;
-                }
-              }
-
-              DSO_CATALOG.set(name.toLowerCase(), {
-                name: name, // Store original name
-                rightAscension: raHours,
-                declination: decDegrees,
-                commonName: commonName,
-                type: type,
-                magnitude: magnitude,
-                constellation: (record.Constellation || record.CON || record.con || '').trim() || undefined
-              });
-              
-              // Also store it by Messier number if available
-              if (record.M && record.M !== '') {
-                const messierNumber = parseInt(record.M, 10).toString();
-                const messierName = 'M' + messierNumber;
-                DSO_CATALOG.set(messierName.toLowerCase(), {
-                  rightAscension: raHours,
-                  declination: decDegrees,
-                  commonName: commonName,
-                  type: type,
-                  magnitude: magnitude,
-                  name: messierName,
-                  constellation: (record.Constellation || record.CON || record.con || '').trim() || undefined
-                });
-              }
-              
-              // Store common name for lookup if available
-              if (commonName) {
-                COMMON_NAMES.set(commonName.toLowerCase(), name.toLowerCase());
-              }
-            }
+          if (name.startsWith('IC')) {
+            const m = name.match(/^IC0*([1-9]\d*)$/);
+            if (m) name = 'IC' + m[1];
           }
         }
-        
-        console.log(`Processed ${DSO_CATALOG.size} objects from OpenNGC catalog`);
-        return;
-      } catch (error) {
-        console.error('Error parsing OpenNGC format:', error);
-      }
-    }
-    
-    // For other files, detect if the file uses semicolons as separators
-    const isSemicolonSeparated = fileContent.indexOf(';') !== -1 && fileContent.indexOf(',') === -1;
-    
-    // Parse based on separator
-    const records = parse(fileContent, {
-      columns: true,
-      skip_empty_lines: true,
-      delimiter: isSemicolonSeparated ? ';' : ','
-    }) as any[];
-    
-    for (const record of records) {
-      // Extract name and common name if available
-      const name = record.name || record.Name || record.id || record.ID || '';
-      const commonName = record.common_name || record.commonName || record['common name'] || '';
-      const type = record.type || record.Type || '';
-      
-      // Extract RA and Dec in different possible formats
-      let raHours = undefined;
-      let decDegrees = undefined;
-      
-      // Handle different RA/Dec formats
-      if (record.ra_hours !== undefined) {
-        raHours = parseFloat(record.ra_hours);
-      } else if (record.RA !== undefined) {
-        // Convert RA from degrees to hours if needed
-        const ra = parseFloat(record.RA);
-        raHours = ra / 15; // 15 degrees = 1 hour
-      }
-      
-      if (record.dec_degrees !== undefined) {
-        decDegrees = parseFloat(record.dec_degrees);
-      } else if (record.Dec !== undefined) {
-        decDegrees = parseFloat(record.Dec);
-      }
-      
-      // Skip if we couldn't parse the coordinates
-      if (!name || raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) {
-        continue;
-      }
-
-      let magnitude: number | undefined = undefined;
-      const vMagStr = record['V-Mag'] || record.VMAG || record.vmag;
-      const bMagStr = record['B-Mag'] || record.BMAG || record.bmag;
-      const magStr = record.magnitude || record.Magnitude || record.MAG || record.mag;
-
-      if (vMagStr !== undefined && String(vMagStr).trim() !== '') {
-        const magVal = parseFloat(String(vMagStr));
-        if (!isNaN(magVal)) {
-          magnitude = magVal;
+        let raHours: number | undefined;
+        if (record.ra_hours !== undefined) {
+          raHours = parseFloat(record.ra_hours);
+        } else if (record.RA !== undefined && String(record.RA).includes(':')) {
+          const parts = String(record.RA).split(':');
+          if (parts.length === 3) {
+            const h = parseFloat(parts[0]);
+            const m = parseFloat(parts[1]);
+            const s = parseFloat(parts[2]);
+            if (!isNaN(h) && !isNaN(m) && !isNaN(s)) raHours = h + m / 60 + s / 3600;
+          }
+        } else if (record.RA !== undefined) {
+          const raDeg = parseFloat(record.RA);
+          if (!isNaN(raDeg)) raHours = raDeg / 15;
         }
-      } else if (bMagStr !== undefined && String(bMagStr).trim() !== '') {
-        const magVal = parseFloat(String(bMagStr));
-        if (!isNaN(magVal)) {
-          magnitude = magVal;
+        let decDegrees: number | undefined;
+        if (record.dec_degrees !== undefined) {
+          const v = parseFloat(record.dec_degrees);
+          if (!isNaN(v)) decDegrees = v;
+        } else if (record.Dec !== undefined && String(record.Dec).includes(':')) {
+          const decStr = String(record.Dec).trim();
+          const parts = decStr.split(':');
+          if (parts.length === 3) {
+            const sign = decStr.startsWith('-') ? -1 : 1;
+            const d = parseFloat(parts[0].replace(/^[+-]/, ''));
+            const m = parseFloat(parts[1]);
+            const s = parseFloat(parts[2]);
+            if (!isNaN(d) && !isNaN(m) && !isNaN(s)) decDegrees = (d + m / 60 + s / 3600) * sign;
+          }
+        } else if (record.Dec !== undefined) {
+          const v = parseFloat(record.Dec);
+          if (!isNaN(v)) decDegrees = v;
         }
-      } else if (magStr !== undefined && String(magStr).trim() !== '') {
-        const magVal = parseFloat(String(magStr));
-        if (!isNaN(magVal)) {
-          magnitude = magVal;
+        if (!name || raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) return;
+        let magnitude: number | undefined;
+        const vMagStr = record['V-Mag'] || record.VMAG || record.vmag;
+        const bMagStr = record['B-Mag'] || record.BMAG || record.bmag;
+        const magStr = record.magnitude || record.Magnitude || record.MAG || record.mag;
+        const pick = (x: any) => x !== undefined && String(x).trim() !== '' ? parseFloat(String(x)) : undefined;
+        magnitude = pick(vMagStr);
+        if (magnitude === undefined) magnitude = pick(bMagStr);
+        if (magnitude === undefined) magnitude = pick(magStr);
+        const constellation = (record.Constellation || record.CON || record.con || '').trim() || undefined;
+        DSO_CATALOG.set(String(name).toLowerCase(), {
+          name: name,
+          rightAscension: raHours,
+          declination: decDegrees,
+          commonName: commonName,
+          type: type,
+          magnitude: magnitude,
+          constellation
+        });
+        if (record.M && record.M !== '') {
+          const mnum = parseInt(record.M, 10);
+          if (!isNaN(mnum)) {
+            const mname = 'M' + mnum.toString();
+            DSO_CATALOG.set(mname.toLowerCase(), {
+              rightAscension: raHours,
+              declination: decDegrees,
+              commonName: commonName,
+              type: type,
+              magnitude: magnitude,
+              name: mname,
+              constellation
+            });
+          }
         }
-      }
-      // Store the coordinates
-      DSO_CATALOG.set(name.toLowerCase(), {
-        name: name,
-        rightAscension: raHours,
-        declination: decDegrees,
-        commonName: commonName,
-        type: type,
-        magnitude: magnitude
+        if (commonName) COMMON_NAMES.set(commonName.toLowerCase(), String(name).toLowerCase());
       });
-      
-      // Store common name for lookup if available
-      if (commonName) {
-        COMMON_NAMES.set(commonName.toLowerCase(), name.toLowerCase());
-      }
-    }
-    
-    console.log(`Loaded ${DSO_CATALOG.size} deep sky objects from ${filePath}`);
+      parser.on('end', () => {
+        console.log(`Loaded ${DSO_CATALOG.size} deep sky objects from ${filePath}`);
+        resolve();
+      });
+      parser.on('error', (e: any) => reject(e));
+      stream.pipe(parser);
+    });
   } catch (error) {
     console.error(`Failed to load DSO catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
   }
@@ -293,186 +165,107 @@ export function loadDSOCatalog(filePath: string): void {
  * Load stars from CSV file
  * @param filePath Path to the stars CSV file
  */
-export function loadStarCatalog(filePath: string): void {
+export async function loadStarCatalog(filePath: string): Promise<void> {
   try {
     if (!fs.existsSync(filePath)) {
       console.warn(`Star catalog file ${filePath} not found. Data from this file will not be loaded.`);
       return;
     }
-    
-    const fileContent = fs.readFileSync(filePath, 'utf8');
-    
-    // Special handling for HYG database
     if (filePath.includes('hygdata_v')) {
       console.log('Using specific parser for HYG database format');
-      
-      // Add options to limit fields and improve performance
-      const parseOptions = {
-        columns: true,
-        skip_empty_lines: true,
-        delimiter: ',', // HYG uses commas
-        // Skip rows that don't meet our criteria using the on_record hook
-        on_record: (record: any, {lines}: {lines: number}) => {
-          // Only keep stars that:
-          // 1. Have a proper name, or
-          // 2. Are bright enough to be seen with the naked eye (mag < 6.0), or
-          // 3. Have a Bayer/Flamsteed designation
+      const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+      await new Promise<void>((resolve, reject) => {
+        const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',' });
+        parser.on('data', (record: any) => {
           const hasName = record.proper || record.bf;
           const isBright = record.mag !== undefined && parseFloat(record.mag) < 6.0;
-          
-          if (hasName || isBright) {
-            return record;
-          }
-          return null; // Skip this record
-        }
-      };
-      
-      try {
-        const records = parse(fileContent, parseOptions) as any[];
-        console.log(`Parsed ${records.length} HYG database records`);
-        
-        for (const record of records) {
-          // Get star name - prefer proper name, then Bayer/Flamsteed designation, then HD number
+          if (!(hasName || isBright)) return;
           let name = '';
-          
-          if (record.proper && record.proper.trim()) {
-            name = record.proper.trim();
-          } else if (record.bf && record.bf.trim()) {
-            name = record.bf.trim();
-          } else if (record.hip && record.hip.trim()) {
-            name = 'HIP ' + record.hip.trim();
-          } else if (record.hd && record.hd.trim()) {
-            name = 'HD ' + record.hd.trim();
-          } else if (record.mag !== undefined && parseFloat(record.mag) < 6.0) {
-            // For bright stars without names, use magnitude and constellation
+          if (record.proper && record.proper.trim()) name = record.proper.trim();
+          else if (record.bf && record.bf.trim()) name = record.bf.trim();
+          else if (record.hip && record.hip.trim()) name = 'HIP ' + record.hip.trim();
+          else if (record.hd && record.hd.trim()) name = 'HD ' + record.hd.trim();
+          else if (record.mag !== undefined && parseFloat(record.mag) < 6.0) {
             name = `Star mag ${parseFloat(record.mag).toFixed(1)}`;
-            if (record.con && record.con.trim()) {
-              name += ` in ${record.con.trim()}`;
-            }
+            if (record.con && record.con.trim()) name += ` in ${record.con.trim()}`;
           }
-          
-          if (!name) continue;
-          
-          // Get RA (in hours) and Dec (in degrees)
+          if (!name) return;
           let raHours: number | undefined;
           let decDegrees: number | undefined;
-          
-          if (record.ra !== undefined && record.ra !== null && record.ra !== '') {
-            raHours = parseFloat(record.ra);
-          }
-          
-          if (record.dec !== undefined && record.dec !== null && record.dec !== '') {
-            decDegrees = parseFloat(record.dec);
-          }
-          
-          // Skip if we couldn't extract coordinates
-          if (raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) {
-            continue;
-          }
-          
-          // Parse magnitude
+          if (record.ra !== undefined && record.ra !== null && record.ra !== '') raHours = parseFloat(record.ra);
+          if (record.dec !== undefined && record.dec !== null && record.dec !== '') decDegrees = parseFloat(record.dec);
+          if (raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) return;
           let magnitude: number | undefined;
           if (record.mag !== undefined && record.mag !== null && String(record.mag).trim() !== '') {
-            const magVal = parseFloat(String(record.mag));
-            if (!isNaN(magVal)) {
-              magnitude = magVal;
-            }
+            const v = parseFloat(String(record.mag));
+            if (!isNaN(v)) magnitude = v;
           }
-
-          // Store the coordinates
-      STAR_CATALOG.set(name.toLowerCase(), {
-        name: name,
-        rightAscension: raHours,
-        declination: decDegrees,
-        magnitude: magnitude,
-        type: 'Star',
-        constellation: record.con && String(record.con).trim() ? String(record.con).trim() : undefined
+          STAR_CATALOG.set(name.toLowerCase(), {
+            name,
+            rightAscension: raHours,
+            declination: decDegrees,
+            magnitude,
+            type: 'Star',
+            constellation: record.con && String(record.con).trim() ? String(record.con).trim() : undefined
+          });
+        });
+        parser.on('end', () => {
+          console.log(`Loaded ${STAR_CATALOG.size} stars from HYG database`);
+          resolve();
+        });
+        parser.on('error', (e: any) => reject(e));
+        stream.pipe(parser);
       });
-        }
-        
-        console.log(`Loaded ${STAR_CATALOG.size} stars from HYG database`);
-        return;
-      } catch (error) {
-        console.error(`Error parsing HYG database: ${error}`);
-        // Fall through to generic parser
-      }
+      return;
     }
-    
-    // For non-HYG files, detect if the file uses semicolons as separators
-    const isSemicolonSeparated = fileContent.indexOf(';') !== -1 && fileContent.indexOf(',') === -1;
-    
-    // Parse based on separator
-    console.log("Parsing standard star catalog...");
-    
-    // Add options for generic star catalogs
-    const parseOptions = {
-      columns: true,
-      skip_empty_lines: true,
-      delimiter: isSemicolonSeparated ? ';' : ','
-    };
-    
-    const records = parse(fileContent, parseOptions) as any[];
-    
-    for (const record of records) {
-      // Extract name data
-      let name = record.name || record.proper || record.ProperName || '';
-      let altName = record.alt_name || record.BayerFlamsteed || '';
-      
-      // Handle RA/Dec in different formats
-      let raHours: number | undefined;
-      let decDegrees: number | undefined;
-      
-      if (record.ra_hours !== undefined) {
-        raHours = parseFloat(record.ra_hours);
-      } else if (record.RA !== undefined) {
-        // Convert RA from degrees to hours if needed
-        const ra = parseFloat(record.RA);
-        raHours = ra / 15; // 15 degrees = 1 hour
-      }
-      
-      if (record.dec_degrees !== undefined) {
-        decDegrees = parseFloat(record.dec_degrees);
-      } else if (record.Dec !== undefined) {
-        decDegrees = parseFloat(record.Dec);
-      }
-      
-      // Skip if we couldn't extract needed information
-      if (!name || raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) {
-        continue;
-      }
-
-      let magnitude: number | undefined;
-      if (record.mag !== undefined && record.mag !== null && record.mag !== '') {
-        const magVal = parseFloat(record.mag);
-        if (!isNaN(magVal)) {
-          magnitude = magVal;
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    await new Promise<void>((resolve, reject) => {
+      const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',' });
+      parser.on('data', (record: any) => {
+        let name = record.name || record.proper || record.ProperName || '';
+        let altName = record.alt_name || record.BayerFlamsteed || '';
+        let raHours: number | undefined;
+        let decDegrees: number | undefined;
+        if (record.ra_hours !== undefined) raHours = parseFloat(record.ra_hours);
+        else if (record.RA !== undefined) {
+          const ra = parseFloat(record.RA);
+          if (!isNaN(ra)) raHours = ra / 15;
         }
-      }
-      
-      // Store the coordinates under the primary name
-      STAR_CATALOG.set(name.toLowerCase(), {
-        name: name,
-        rightAscension: raHours,
-        declination: decDegrees,
-        magnitude: magnitude,
-        type: 'Star',
-        constellation: (record.constellation || record.Constellation || record.con || '').trim() || undefined
-      });
-      
-      // Also store under alternative name if available
-      if (altName) {
-        STAR_CATALOG.set(altName.toLowerCase(), {
-          name: name, // Use primary name for consistency, altName is just for lookup
+        if (record.dec_degrees !== undefined) decDegrees = parseFloat(record.dec_degrees);
+        else if (record.Dec !== undefined) decDegrees = parseFloat(record.Dec);
+        if (!name || raHours === undefined || decDegrees === undefined || isNaN(raHours) || isNaN(decDegrees)) return;
+        let magnitude: number | undefined;
+        if (record.mag !== undefined && record.mag !== null && record.mag !== '') {
+          const v = parseFloat(record.mag);
+          if (!isNaN(v)) magnitude = v;
+        }
+        const constellation = (record.constellation || record.Constellation || record.con || '').trim() || undefined;
+        STAR_CATALOG.set(String(name).toLowerCase(), {
+          name,
           rightAscension: raHours,
           declination: decDegrees,
-          magnitude: magnitude,
+          magnitude,
           type: 'Star',
-          constellation: (record.constellation || record.Constellation || record.con || '').trim() || undefined
+          constellation
         });
-      }
-    }
-    
-    console.log(`Loaded ${STAR_CATALOG.size} stars from ${filePath}`);
+        if (altName) {
+          STAR_CATALOG.set(String(altName).toLowerCase(), {
+            name,
+            rightAscension: raHours,
+            declination: decDegrees,
+            magnitude,
+            type: 'Star',
+            constellation
+          });
+        }
+      });
+      parser.on('end', () => {
+        console.log(`Loaded ${STAR_CATALOG.size} stars from ${filePath}`);
+        resolve();
+      });
+      parser.on('error', (e: any) => reject(e));
+      stream.pipe(parser);
+    });
   } catch (error) {
     console.error(`Failed to load star catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
   }
@@ -481,7 +274,7 @@ export function loadStarCatalog(filePath: string): void {
 /**
  * Initialize catalogs from data files
  */
-export function initializeCatalogs(): void {
+export async function initializeCatalogs(): Promise<void> {
   // Use a direct path to the data directory
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
@@ -509,7 +302,7 @@ export function initializeCatalogs(): void {
     const filePath = path.join(dataDir, file);
     if (fs.existsSync(filePath)) {
       console.log(`Loading star catalog from ${filePath}`);
-      loadStarCatalog(filePath);
+      await loadStarCatalog(filePath);
       starCatalogLoaded = true;
       break;
     }
@@ -534,7 +327,7 @@ export function initializeCatalogs(): void {
     const filePath = path.join(dataDir, file);
     if (fs.existsSync(filePath)) {
       console.log(`Loading DSO catalog from ${filePath}`);
-      loadDSOCatalog(filePath);
+      await loadDSOCatalog(filePath);
       dsoCatalogLoaded = true;
       break;
     }
