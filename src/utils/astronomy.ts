@@ -546,8 +546,6 @@ export function initializeCatalogs(): void {
   }
 }
 
-// Initialize catalogs on module import
-initializeCatalogs();
 
 /**
  * Calculate solar system object positions using astronomy-engine
