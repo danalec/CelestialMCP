@@ -22,6 +22,7 @@ interface StarHoppingInput {
   initialSearchRadiusDegrees?: number;
   startStarMagnitudeThreshold?: number;
   maxHops?: number;
+  preferSameConstellation?: boolean;
 }
 
 interface CelestialObjectData extends EquatorialCoordinates {
@@ -60,6 +61,10 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
     maxHops: {
       type: z.number().positive().optional().default(20),
       description: 'Maximum number of hops to attempt before stopping. Default: 20.',
+    },
+    preferSameConstellation: {
+      type: z.boolean().optional().default(false),
+      description: 'Prefer stars in the same constellation as the target when available.'
     },
   };
 
@@ -123,6 +128,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
     // The above block was removed because it allowed non-star targets (like DSOs)
     // to be considered as starting stars if they had a magnitude, which is incorrect.
     // Starting stars must be actual stars from the STAR_CATALOG.
+    const targetConstellation = targetEquatorial.constellation?.toLowerCase();
     for (const [starId, starEq] of STAR_CATALOG.entries()) {
       if (starEq.magnitude === undefined || starEq.magnitude > params.startStarMagnitudeThreshold!) {
         continue;
@@ -151,7 +157,13 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
       };
     }
 
-    potentialStartStars.sort((a, b) => (a.magnitude ?? Infinity) - (b.magnitude ?? Infinity));
+    potentialStartStars.sort((a, b) => {
+      const sameA = params.preferSameConstellation && targetConstellation && a.constellation?.toLowerCase() === targetConstellation ? -0.5 : 0;
+      const sameB = params.preferSameConstellation && targetConstellation && b.constellation?.toLowerCase() === targetConstellation ? -0.5 : 0;
+      const magA = (a.magnitude ?? Infinity) + sameA;
+      const magB = (b.magnitude ?? Infinity) + sameB;
+      return magA - magB;
+    });
     const startStar = potentialStartStars[0];
 
     const initialSeparationToTarget = calculateAngularSeparation(startStar, targetEquatorial);
@@ -219,8 +231,11 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
           continue;
         }
 
-        // Prefer candidate that makes most progress towards target
-        if (candidateDistToTarget < smallestDistToTargetForNextHop) {
+        // Prefer candidate that makes most progress towards target, with optional constellation bias
+        const sameConst = params.preferSameConstellation && targetConstellation && candidateEq.constellation?.toLowerCase() === targetConstellation;
+        const score = candidateDistToTarget - (sameConst ? 0.1 : 0);
+        const bestScore = smallestDistToTargetForNextHop - ((params.preferSameConstellation && targetConstellation && bestNextHop?.constellation?.toLowerCase() === targetConstellation) ? 0.1 : 0);
+        if (!bestNextHop || score < bestScore) {
           smallestDistToTargetForNextHop = candidateDistToTarget;
           bestNextHop = { ...candidateEq, id: candidateId, altAz: candidateAltAz };
         }
