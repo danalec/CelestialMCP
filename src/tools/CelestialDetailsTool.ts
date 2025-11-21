@@ -11,7 +11,11 @@ import * as Astronomy from 'astronomy-engine';
 
 interface CelestialDetailsInput {
   objectName: string;
-  // Removed: useSystemTime, dateTime, latitude, longitude, elevation
+  latitude?: number;
+  longitude?: number;
+  altitude?: number;
+  temperature?: number;
+  pressure?: number;
 }
 
 class CelestialDetailsTool extends MCPTool<CelestialDetailsInput> {
@@ -22,8 +26,27 @@ class CelestialDetailsTool extends MCPTool<CelestialDetailsInput> {
     objectName: {
       type: z.string(),
       description: "The name or catalog identifier of the celestial object. Examples: 'Jupiter', 'Sirius', 'M31', 'NGC 7000', 'Crab Nebula'. The tool will attempt to resolve common names."
+    },
+    latitude: {
+      type: z.number().optional(),
+      description: "Optional observer latitude in degrees. Defaults to configured value."
+    },
+    longitude: {
+      type: z.number().optional(),
+      description: "Optional observer longitude in degrees. Defaults to configured value."
+    },
+    altitude: {
+      type: z.number().optional(),
+      description: "Optional observer altitude in meters. Defaults to configured value."
+    },
+    temperature: {
+      type: z.number().optional(),
+      description: "Optional ambient temperature in Celsius. Defaults to configured value."
+    },
+    pressure: {
+      type: z.number().optional(),
+      description: "Optional pressure in hPa. Defaults to configured value."
     }
-    // Removed: useSystemTime, dateTime, latitude, longitude, elevation
   };
 
   async execute(params: CelestialDetailsInput) {
@@ -31,13 +54,12 @@ class CelestialDetailsTool extends MCPTool<CelestialDetailsInput> {
       // Always use current system time
       const date = new Date();
 
-      // Always use pre-configured observer location
       const observer = {
-        latitude: OBSERVER_CONFIG.latitude,
-        longitude: OBSERVER_CONFIG.longitude,
-        elevation: OBSERVER_CONFIG.altitude,
-        temperature: OBSERVER_CONFIG.temperature,
-        pressure: OBSERVER_CONFIG.pressure
+        latitude: params.latitude ?? OBSERVER_CONFIG.latitude,
+        longitude: params.longitude ?? OBSERVER_CONFIG.longitude,
+        elevation: params.altitude ?? OBSERVER_CONFIG.altitude,
+        temperature: params.temperature ?? OBSERVER_CONFIG.temperature,
+        pressure: params.pressure ?? OBSERVER_CONFIG.pressure
       };
       
       // Get equatorial coordinates for the object
