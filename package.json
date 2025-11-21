@@ -14,7 +14,8 @@
     "watch": "tsc --watch",
     "start": "node --require ./scripts/node24-polyfills.cjs dist/index.js",
     "fetch-catalogs": "node scripts/fetch-catalogs.js",
-    "validate": "mcp validate"
+    "validate": "mcp validate",
+    "dev": "node --require ./scripts/node24-polyfills.cjs --loader ts-node/esm src/index.ts"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.17",
