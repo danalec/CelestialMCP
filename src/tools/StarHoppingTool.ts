@@ -21,6 +21,7 @@ interface StarHoppingInput {
   maxHopMagnitude?: number;
   initialSearchRadiusDegrees?: number;
   startStarMagnitudeThreshold?: number;
+  maxHops?: number;
 }
 
 interface CelestialObjectData extends EquatorialCoordinates {
@@ -55,6 +56,10 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
     startStarMagnitudeThreshold: {
       type: z.number().optional().default(3.5),
       description: 'The maximum (dimmest) magnitude for a star to be a good, bright "starting star." Default: 3.5.',
+    },
+    maxHops: {
+      type: z.number().positive().optional().default(20),
+      description: 'Maximum number of hops to attempt before stopping. Default: 20.',
     },
   };
 
@@ -162,6 +167,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
         name: startStar.name!,
         magnitude: startStar.magnitude!,
         ...this.formatCoordsForOutput(startStar),
+        ...(startStar.altAz && this.formatAltAzForOutput(startStar.altAz)),
       },
     };
 
@@ -185,7 +191,8 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
     let currentDistanceToTarget = initialSeparationToTarget;
     const visitedStarIds = new Set<string>([startStar.id]);
 
-    for (let hopNum = 1; hopNum <= 20; hopNum++) { // Max 20 hops to prevent infinite loops
+    const maxHops = params.maxHops ?? 20;
+    for (let hopNum = 1; hopNum <= maxHops; hopNum++) {
       let bestNextHop: CelestialObjectData | null = null;
       let smallestDistToTargetForNextHop = currentDistanceToTarget;
 
@@ -215,7 +222,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
         // Prefer candidate that makes most progress towards target
         if (candidateDistToTarget < smallestDistToTargetForNextHop) {
           smallestDistToTargetForNextHop = candidateDistToTarget;
-          bestNextHop = { ...candidateEq, id: candidateId }; // altAz is checked for visibility but not stored in the hop object
+          bestNextHop = { ...candidateEq, id: candidateId, altAz: candidateAltAz };
         }
       }
 
@@ -230,9 +237,11 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
             name: bestNextHop.name!,
             magnitude: bestNextHop.magnitude!,
             ...this.formatCoordsForOutput(bestNextHop),
+            ...(bestNextHop.altAz && this.formatAltAzForOutput(bestNextHop.altAz)),
           },
           direction: `towards ${bearingToNextHop.cardinal} (Bearing: ${bearingToNextHop.degrees}°)`,
           angularDistanceDegrees: parseFloat(hopDistance.toFixed(1)),
+          ...(currentHopStar.altAz && { fromAltAz: this.formatAltAzForOutput(currentHopStar.altAz) })
         });
 
         currentHopStar = bestNextHop;
@@ -245,7 +254,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
             ...baseResponse,
             hopSequence,
             finalStep: {
-              fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude! },
+              fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude!, ...(currentHopStar.altAz && this.formatAltAzForOutput(currentHopStar.altAz)) },
               message: `The target ${params.targetObjectName} should now be within your FOV, approx ${currentDistanceToTarget.toFixed(1)}° towards ${bearingToTarget.cardinal} (Bearing: ${bearingToTarget.degrees}°) from ${currentHopStar.name}.`,
             },
             status: 'Success',
@@ -259,7 +268,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
           ...baseResponse,
           hopSequence,
           finalStep: {
-            fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude! },
+            fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude!, ...(currentHopStar.altAz && this.formatAltAzForOutput(currentHopStar.altAz)) },
             message: `Pathfinding stopped. Target ${params.targetObjectName} is approx ${currentDistanceToTarget.toFixed(1)}° towards ${bearingToTarget.cardinal} (Bearing: ${bearingToTarget.degrees}°) from ${currentHopStar.name}, but no further hops could be found.`,
           },
           status: 'PathNotFound',
@@ -274,7 +283,7 @@ class StarHoppingTool extends MCPTool<StarHoppingInput> {
       ...baseResponse,
       hopSequence,
       finalStep: {
-        fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude! },
+        fromStar: { name: currentHopStar.name!, magnitude: currentHopStar.magnitude!, ...(currentHopStar.altAz && this.formatAltAzForOutput(currentHopStar.altAz)) },
         message: `Pathfinding stopped after maximum hops. Target ${params.targetObjectName} is approx ${currentDistanceToTarget.toFixed(1)}° towards ${bearingToTarget.cardinal} (Bearing: ${bearingToTarget.degrees}°) from ${currentHopStar.name}.`,
       },
       status: 'PathNotFound',
