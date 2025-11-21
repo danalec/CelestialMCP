@@ -1,9 +1,12 @@
 import { MCPTool } from 'mcp-framework';
 import { z } from 'zod';
-import { listCelestialObjects } from '../utils/astronomy.js';
+import { listCelestialObjects, STAR_CATALOG, DSO_CATALOG } from '../utils/astronomy.js';
 
 interface ListCelestialObjectsInput {
   category?: string;
+  limit?: number;
+  offset?: number;
+  minMagnitude?: number;
 }
 
 class ListCelestialObjectsTool extends MCPTool<ListCelestialObjectsInput> {
@@ -14,12 +17,92 @@ class ListCelestialObjectsTool extends MCPTool<ListCelestialObjectsInput> {
     category: {
       type: z.string().optional(),
       description: "Optional. Filters the list by category. Valid categories are: 'planets' (for Solar System objects like Sun, Moon, and planets), 'stars', 'messier' (for Messier objects), 'ic' (for Index Catalogue objects), 'ngc' (for New General Catalogue objects), 'dso' (for all Deep Sky Objects, including Messier, IC, NGC, and others), or 'all' (to list objects from all available categories). If omitted, defaults to 'all'."
+    },
+    limit: {
+      type: z.number().positive().optional(),
+      description: "Optional. Maximum number of objects to return per category."
+    },
+    offset: {
+      type: z.number().min(0).optional(),
+      description: "Optional. Number of objects to skip before returning results per category."
+    },
+    minMagnitude: {
+      type: z.number().optional(),
+      description: "Optional. Include only objects with visual magnitude less than or equal to this value. Applies to stars and DSOs."
     }
   };
 
   async execute(params: ListCelestialObjectsInput) {
     try {
-        const allCategoriesFromAstronomy = listCelestialObjects(); // Get all categories from astronomy.ts
+        const allCategoriesFromAstronomy = listCelestialObjects();
+        const limit = typeof params.limit === 'number' && params.limit > 0 ? params.limit : undefined;
+        const offset = typeof params.offset === 'number' && params.offset >= 0 ? params.offset : 0;
+        const minMag = typeof params.minMagnitude === 'number' ? params.minMagnitude : undefined;
+
+        const paginate = (items: string[]) => {
+          if (limit === undefined) return items;
+          const start = offset ?? 0;
+          return items.slice(start, start + limit);
+        };
+
+        const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+        const buildStars = () => {
+          const seen = new Set<string>();
+          const names: string[] = [];
+          for (const [, coords] of STAR_CATALOG.entries()) {
+            if (minMag !== undefined) {
+              if (typeof coords.magnitude !== 'number' || coords.magnitude > minMag) continue;
+            }
+            const primary = coords.name ? coords.name.toLowerCase() : undefined;
+            if (!primary) continue;
+            if (seen.has(primary)) continue;
+            seen.add(primary);
+            names.push(capitalize(primary));
+          }
+          names.sort();
+          const page = paginate(names);
+          return { total: names.length, objects: page };
+        };
+
+        const buildDsoByPrefix = (prefix: 'm' | 'ic' | 'ngc') => {
+          const names: string[] = [];
+          for (const key of DSO_CATALOG.keys()) {
+            if (prefix === 'm' && /^m\d+$/i.test(key)) {
+              const obj = DSO_CATALOG.get(key)!;
+              if (minMag !== undefined && (typeof obj.magnitude !== 'number' || obj.magnitude > minMag)) continue;
+              names.push(capitalize(key));
+            } else if (prefix === 'ic' && /^ic\d+$/i.test(key)) {
+              const obj = DSO_CATALOG.get(key)!;
+              if (minMag !== undefined && (typeof obj.magnitude !== 'number' || obj.magnitude > minMag)) continue;
+              names.push(capitalize(key));
+            } else if (prefix === 'ngc' && /^ngc\d+$/i.test(key)) {
+              const obj = DSO_CATALOG.get(key)!;
+              if (minMag !== undefined && (typeof obj.magnitude !== 'number' || obj.magnitude > minMag)) continue;
+              names.push(capitalize(key));
+            }
+          }
+          names.sort((a, b) => {
+            const pa = prefix === 'm' ? parseInt(a.substring(1)) : prefix === 'ic' ? parseInt(a.substring(2)) : parseInt(a.substring(3));
+            const pb = prefix === 'm' ? parseInt(b.substring(1)) : prefix === 'ic' ? parseInt(b.substring(2)) : parseInt(b.substring(3));
+            return pa - pb;
+          });
+          const page = paginate(names);
+          return { total: names.length, objects: page };
+        };
+
+        const buildOtherDso = () => {
+          const names: string[] = [];
+          for (const key of DSO_CATALOG.keys()) {
+            if (/^(m\d+|ic\d+|ngc\d+)$/i.test(key)) continue;
+            const obj = DSO_CATALOG.get(key)!;
+            if (minMag !== undefined && (typeof obj.magnitude !== 'number' || obj.magnitude > minMag)) continue;
+            names.push(capitalize(key));
+          }
+          names.sort();
+          const page = paginate(names);
+          return { total: names.length, objects: page };
+        };
 
         let relevantCategories: { category: string, objects: string[] }[] = [];
 
@@ -27,33 +110,40 @@ class ListCelestialObjectsTool extends MCPTool<ListCelestialObjectsInput> {
             const requestedCategoryLower = params.category.toLowerCase();
 
             if (requestedCategoryLower === 'all') {
-                const totalObjects = allCategoriesFromAstronomy.reduce((sum, cat) => sum + cat.objects.length, 0);
-                return {
-                    totalCategories: allCategoriesFromAstronomy.length,
-                    totalObjects: totalObjects,
-                    categories: allCategoriesFromAstronomy.map(cat => ({
-                        category: cat.category,
-                        objectCount: cat.objects.length,
-                        objects: cat.objects
-                    }))
-                };
+                const categoriesOut: any[] = [];
+                for (const cat of allCategoriesFromAstronomy) {
+                  if (cat.category === 'Stars') {
+                    const s = buildStars();
+                    categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+                  } else if (cat.category === 'Messier Objects') {
+                    const s = buildDsoByPrefix('m');
+                    categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+                  } else if (cat.category === 'IC Objects') {
+                    const s = buildDsoByPrefix('ic');
+                    categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+                  } else if (cat.category === 'NGC Objects') {
+                    const s = buildDsoByPrefix('ngc');
+                    categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+                  } else if (cat.category === 'Other Deep Sky Objects') {
+                    const s = buildOtherDso();
+                    categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+                  } else if (cat.category === 'Solar System Objects') {
+                    const page = paginate(cat.objects);
+                    categoriesOut.push({ category: cat.category, objectCount: page.length, objects: page });
+                  }
+                }
+                const totalObjects = categoriesOut.reduce((sum, c) => sum + c.objectCount, 0);
+                return { totalCategories: categoriesOut.length, totalObjects, categories: categoriesOut };
             } else if (requestedCategoryLower === 'dso') {
-                const dsoCategories = allCategoriesFromAstronomy.filter(cat =>
-                    cat.category === 'Messier Objects' ||
-                    cat.category === 'IC Objects' ||
-                    cat.category === 'NGC Objects' ||
-                    cat.category === 'Other Deep Sky Objects'
-                );
-                const totalObjectsDSO = dsoCategories.reduce((sum, cat) => sum + cat.objects.length, 0);
-                return {
-                    totalCategories: dsoCategories.length,
-                    totalObjects: totalObjectsDSO,
-                    categories: dsoCategories.map(cat => ({
-                        category: cat.category,
-                        objectCount: cat.objects.length,
-                        objects: cat.objects
-                    }))
-                };
+                const parts = [
+                  { name: 'Messier Objects', data: buildDsoByPrefix('m') },
+                  { name: 'IC Objects', data: buildDsoByPrefix('ic') },
+                  { name: 'NGC Objects', data: buildDsoByPrefix('ngc') },
+                  { name: 'Other Deep Sky Objects', data: buildOtherDso() }
+                ];
+                const categories = parts.map(p => ({ category: p.name, objectCount: p.data.objects.length, objects: p.data.objects }));
+                const totalObjectsDSO = categories.reduce((sum, c) => sum + c.objectCount, 0);
+                return { totalCategories: categories.length, totalObjects: totalObjectsDSO, categories };
             } else {
                 // For specific categories like 'planets', 'stars', 'messier', 'ic', 'ngc'
                 const targetCategory = allCategoriesFromAstronomy.find(cat => {
@@ -73,24 +163,51 @@ class ListCelestialObjectsTool extends MCPTool<ListCelestialObjectsInput> {
                     };
                 }
 
-                return {
-                    category: params.category, // Echo back the requested category
-                    objectCount: targetCategory.objects.length,
-                    objects: targetCategory.objects
-                };
+                if (requestedCategoryLower === 'stars') {
+                  const s = buildStars();
+                  return { category: params.category, objectCount: s.objects.length, objects: s.objects };
+                }
+                if (requestedCategoryLower === 'messier') {
+                  const s = buildDsoByPrefix('m');
+                  return { category: params.category, objectCount: s.objects.length, objects: s.objects };
+                }
+                if (requestedCategoryLower === 'ic') {
+                  const s = buildDsoByPrefix('ic');
+                  return { category: params.category, objectCount: s.objects.length, objects: s.objects };
+                }
+                if (requestedCategoryLower === 'ngc') {
+                  const s = buildDsoByPrefix('ngc');
+                  return { category: params.category, objectCount: s.objects.length, objects: s.objects };
+                }
+                const page = paginate(targetCategory.objects);
+                return { category: params.category, objectCount: page.length, objects: page };
             }
         } else {
             // Default behavior if no category parameter is provided (same as 'all')
-            const totalObjects = allCategoriesFromAstronomy.reduce((sum, cat) => sum + cat.objects.length, 0);
-            return {
-                totalCategories: allCategoriesFromAstronomy.length,
-                totalObjects: totalObjects,
-                categories: allCategoriesFromAstronomy.map(cat => ({
-                    category: cat.category,
-                    objectCount: cat.objects.length,
-                    objects: cat.objects
-                }))
-            };
+            const categoriesOut: any[] = [];
+            for (const cat of allCategoriesFromAstronomy) {
+              if (cat.category === 'Stars') {
+                const s = buildStars();
+                categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+              } else if (cat.category === 'Messier Objects') {
+                const s = buildDsoByPrefix('m');
+                categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+              } else if (cat.category === 'IC Objects') {
+                const s = buildDsoByPrefix('ic');
+                categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+              } else if (cat.category === 'NGC Objects') {
+                const s = buildDsoByPrefix('ngc');
+                categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+              } else if (cat.category === 'Other Deep Sky Objects') {
+                const s = buildOtherDso();
+                categoriesOut.push({ category: cat.category, objectCount: s.objects.length, objects: s.objects });
+              } else if (cat.category === 'Solar System Objects') {
+                const page = paginate(cat.objects);
+                categoriesOut.push({ category: cat.category, objectCount: page.length, objects: page });
+              }
+            }
+            const totalObjects = categoriesOut.reduce((sum, c) => sum + c.objectCount, 0);
+            return { totalCategories: categoriesOut.length, totalObjects, categories: categoriesOut };
         }
     } catch (error: any) {
         throw new Error(`Failed to list celestial objects: ${error.message}`);
