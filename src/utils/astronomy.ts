@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { parse } from 'csv-parse';
 import * as Astronomy from 'astronomy-engine';
+import { logger } from './logger.js';
 
 // No custom class needed - we'll use our own calculations for fixed stars
 
@@ -57,7 +58,7 @@ export const SOLAR_SYSTEM_OBJECTS: Record<string, boolean> = {
 export async function loadDSOCatalog(filePath: string): Promise<void> {
   try {
     if (!fs.existsSync(filePath)) {
-      console.warn(`DSO catalog file ${filePath} not found. Data from this file will not be loaded.`);
+      logger.warn(`DSO catalog file ${filePath} not found. Data from this file will not be loaded.`);
       return;
     }
     const isOpenNGC = filePath.endsWith('ngc.csv') || filePath.includes('NGC.csv');
@@ -150,14 +151,14 @@ export async function loadDSOCatalog(filePath: string): Promise<void> {
         if (commonName) COMMON_NAMES.set(commonName.toLowerCase(), String(name).toLowerCase());
       });
       parser.on('end', () => {
-        console.log(`Loaded ${DSO_CATALOG.size} deep sky objects from ${filePath}`);
+      logger.info(`Loaded ${DSO_CATALOG.size} deep sky objects from ${filePath}`);
         resolve();
       });
       parser.on('error', (e: any) => reject(e));
       stream.pipe(parser);
     });
   } catch (error) {
-    console.error(`Failed to load DSO catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
+    logger.error(`Failed to load DSO catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
   }
 }
 
@@ -168,11 +169,11 @@ export async function loadDSOCatalog(filePath: string): Promise<void> {
 export async function loadStarCatalog(filePath: string): Promise<void> {
   try {
     if (!fs.existsSync(filePath)) {
-      console.warn(`Star catalog file ${filePath} not found. Data from this file will not be loaded.`);
+      logger.warn(`Star catalog file ${filePath} not found. Data from this file will not be loaded.`);
       return;
     }
     if (filePath.includes('hygdata_v')) {
-      console.log('Using specific parser for HYG database format');
+      logger.info('Using specific parser for HYG database format');
       const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
       await new Promise<void>((resolve, reject) => {
         const parser = parse({ columns: true, skip_empty_lines: true, delimiter: ',' });
@@ -210,7 +211,7 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
           });
         });
         parser.on('end', () => {
-          console.log(`Loaded ${STAR_CATALOG.size} stars from HYG database`);
+          logger.info(`Loaded ${STAR_CATALOG.size} stars from HYG database`);
           resolve();
         });
         parser.on('error', (e: any) => reject(e));
@@ -260,14 +261,14 @@ export async function loadStarCatalog(filePath: string): Promise<void> {
         }
       });
       parser.on('end', () => {
-        console.log(`Loaded ${STAR_CATALOG.size} stars from ${filePath}`);
+        logger.info(`Loaded ${STAR_CATALOG.size} stars from ${filePath}`);
         resolve();
       });
       parser.on('error', (e: any) => reject(e));
       stream.pipe(parser);
     });
   } catch (error) {
-    console.error(`Failed to load star catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
+    logger.error(`Failed to load star catalog from ${filePath}: ${error}. Data from this file will not be loaded.`);
   }
 }
 
@@ -280,11 +281,11 @@ export async function initializeCatalogs(): Promise<void> {
   const __dirname = dirname(__filename);
   const dataDir = path.resolve(__dirname, '../../data');
   const projectRoot = path.resolve(__dirname, '../../..'); // Project root for running script
-  console.log(`Looking for catalog data in: ${dataDir}`);
+  logger.info(`Looking for catalog data in: ${dataDir}`);
   
   // Check if data directory exists
   if (!fs.existsSync(dataDir)) {
-    console.warn(`Data directory not found at ${dataDir}. It will be created. The application will attempt to download catalogs.`);
+    logger.warn(`Data directory not found at ${dataDir}. It will be created. The application will attempt to download catalogs.`);
     fs.mkdirSync(dataDir, { recursive: true });
   }
   
@@ -301,7 +302,7 @@ export async function initializeCatalogs(): Promise<void> {
   for (const file of allStarFilesToCheck) {
     const filePath = path.join(dataDir, file);
     if (fs.existsSync(filePath)) {
-      console.log(`Loading star catalog from ${filePath}`);
+      logger.info(`Loading star catalog from ${filePath}`);
       await loadStarCatalog(filePath);
       starCatalogLoaded = true;
       break;
@@ -309,7 +310,7 @@ export async function initializeCatalogs(): Promise<void> {
   }
 
   if (!starCatalogLoaded) {
-    console.warn('No star catalog file was successfully loaded, even after download attempt. Star catalog will be empty or incomplete.');
+    logger.warn('No star catalog file was successfully loaded, even after download attempt. Star catalog will be empty or incomplete.');
     // STAR_CATALOG will remain as it is (likely empty).
   }
 
@@ -326,7 +327,7 @@ export async function initializeCatalogs(): Promise<void> {
   for (const file of allDsoFilesToCheck) {
     const filePath = path.join(dataDir, file);
     if (fs.existsSync(filePath)) {
-      console.log(`Loading DSO catalog from ${filePath}`);
+      logger.info(`Loading DSO catalog from ${filePath}`);
       await loadDSOCatalog(filePath);
       dsoCatalogLoaded = true;
       break;
@@ -334,7 +335,7 @@ export async function initializeCatalogs(): Promise<void> {
   }
 
   if (!dsoCatalogLoaded) {
-    console.warn('No DSO catalog file was successfully loaded, even after download attempt. DSO catalog will be empty or incomplete.');
+    logger.warn('No DSO catalog file was successfully loaded, even after download attempt. DSO catalog will be empty or incomplete.');
     // DSO_CATALOG will remain as it is (likely empty).
   }
 }
