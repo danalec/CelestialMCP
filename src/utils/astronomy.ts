@@ -15,6 +15,7 @@ export interface EquatorialCoordinates {
   name?: string;          // Canonical name (e.g., proper name, catalog ID like 'M31', 'HIP 12345')
   commonName?: string;    // Common name, if different from 'name' (used more for DSOs)
   type?: string;          // e.g., 'Star', 'Galaxy', 'Planet'
+  constellation?: string; // IAU constellation code/name when available
 }
 
 export interface HorizontalCoordinates {
@@ -171,7 +172,8 @@ export function loadDSOCatalog(filePath: string): void {
                 declination: decDegrees,
                 commonName: commonName,
                 type: type,
-                magnitude: magnitude
+                magnitude: magnitude,
+                constellation: (record.Constellation || record.CON || record.con || '').trim() || undefined
               });
               
               // Also store it by Messier number if available
@@ -184,7 +186,8 @@ export function loadDSOCatalog(filePath: string): void {
                   commonName: commonName,
                   type: type,
                   magnitude: magnitude,
-                  name: messierName // Store Messier name
+                  name: messierName,
+                  constellation: (record.Constellation || record.CON || record.con || '').trim() || undefined
                 });
               }
               
@@ -377,13 +380,14 @@ export function loadStarCatalog(filePath: string): void {
           }
 
           // Store the coordinates
-          STAR_CATALOG.set(name.toLowerCase(), {
-            name: name,
-            rightAscension: raHours,
-            declination: decDegrees,
-            magnitude: magnitude, // Add parsed magnitude
-            type: 'Star'
-          });
+      STAR_CATALOG.set(name.toLowerCase(), {
+        name: name,
+        rightAscension: raHours,
+        declination: decDegrees,
+        magnitude: magnitude,
+        type: 'Star',
+        constellation: record.con && String(record.con).trim() ? String(record.con).trim() : undefined
+      });
         }
         
         console.log(`Loaded ${STAR_CATALOG.size} stars from HYG database`);
@@ -451,7 +455,8 @@ export function loadStarCatalog(filePath: string): void {
         rightAscension: raHours,
         declination: decDegrees,
         magnitude: magnitude,
-        type: 'Star'
+        type: 'Star',
+        constellation: (record.constellation || record.Constellation || record.con || '').trim() || undefined
       });
       
       // Also store under alternative name if available
@@ -461,7 +466,8 @@ export function loadStarCatalog(filePath: string): void {
           rightAscension: raHours,
           declination: decDegrees,
           magnitude: magnitude,
-          type: 'Star'
+          type: 'Star',
+          constellation: (record.constellation || record.Constellation || record.con || '').trim() || undefined
         });
       }
     }
